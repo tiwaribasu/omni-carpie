@@ -1,66 +1,81 @@
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import pandas as pd
 
-def get_data(file):
-    df = pd.read_excel(file)
-    df['Dates'] = pd.to_datetime(df['Dates'], dayfirst=True)
-    df['Dates'] = df['Dates'].dt.strftime('%d-%m-%Y')
+# Load the Excel file
+excel_file = 'Daily_PnL.xlsx'
 
-    # Options Data
-    df_option = df.loc[:, :'Equity Portfolio'].drop('Equity Portfolio', axis=1)
-    df_option.columns = df_option.iloc[0]
-    df_option = df_option.iloc[1:]
-    df_option.reset_index(drop=True, inplace=True)
-    df_option = df_option.rename(columns={df_option.columns[0]: 'Date'})
+# Read all sheets into a dictionary of DataFrames
+sheets_dict = pd.read_excel(excel_file, sheet_name=None)
 
-    # Equity Data
-    df_equity = pd.concat([df[['Dates']], df.loc[:, 'Equity Portfolio':]], axis=1)
-    df_equity.columns = df_equity.iloc[0]
-    df_equity = df_equity.iloc[1:]
-    df_equity.reset_index(drop=True, inplace=True)
-    df_equity = df_equity.rename(columns={df_equity.columns[0]: 'Date'})
+# Function to clean and convert data to numeric
+def clean_and_convert(df):
+    for col in df.columns[1:]:
+        df[col] = df[col].replace({',': ''}, regex=True).astype(float)
+    return df
 
-    return df_option, df_equity
+# Function to calculate the last 21D P&L, last 60D P&L, and Since Inception P&L
+def calculate_pnl_metrics(df, col):
+    today_pnl = df[col].iloc[-1]
+    last_21d_pnl = df[col].iloc[-21:].sum()
+    last_60d_pnl = df[col].iloc[-60:].sum()
+    since_inception_pnl = df[col].sum()
+    return today_pnl, last_21d_pnl, last_60d_pnl, since_inception_pnl
 
+# Streamlit App
+st.set_page_config(layout="wide")  # Set layout to wide for full screen
 
-def main():
-    # Load Results Data
-    file = 'Dashboard.xlsx'
-    df_option, df_equity = get_data(file)
+all_data = []
 
-    # Selections
-    portfolio = st.sidebar.selectbox('Portfolio Type', ('Equity', 'Options'))
-    if portfolio == 'Equity':
-        df = df_equity
-    elif portfolio == 'Options':
-        df = df_option
+# Two Columns
+col1, col2 = st.columns([3, 2])
 
-    # Show Results Data
-    st.write(df)
+# Sheetwise P&L metrics
+with col1:
+    for sheet_name, df in sheets_dict.items():
+        st.header(f'{sheet_name} P&L')
+        
+        df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y')
+        df = clean_and_convert(df)
+        all_data.append(df)
 
-    # Plots
-    column_headers = df.columns[1:]
-    column_headers_with_all = ['All'] + list(column_headers)
-    column_to_plot = st.sidebar.selectbox('Select column to plot', column_headers_with_all)
+        metrics = {'Name': [], "Today's P&L": [], 'Last 21D P&L': [], 'Last 60D P&L': [], 'Since Inception': []}
 
-    plt.figure(figsize=(10, 6))
-    if column_to_plot == 'All':
-        for column in column_headers:
-            plt.plot(df['Date'].values, df[column].values, label=column)
-    else:
-        plt.plot(df['Date'].values, df[column_to_plot].values)
+        for col in df.columns[1:]:
+            today_pnl, last_21d_pnl, last_60d_pnl, since_inception_pnl = calculate_pnl_metrics(df, col)
+            metrics['Name'].append(col)
+            metrics["Today's P&L"].append(int(today_pnl))
+            metrics['Last 21D P&L'].append(int(last_21d_pnl))
+            metrics['Last 60D P&L'].append(int(last_60d_pnl))
+            metrics['Since Inception'].append(int(since_inception_pnl))
 
-    # Labels and Title
-    plt.xlabel('Date')
-    plt.ylabel('P&L')
-    plt.title('P&L Over Time')
-    plt.legend()
+        metrics_df = pd.DataFrame(metrics)
+        metrics_df = metrics_df.set_index('Name')
 
-    plt.xticks(rotation=45)
+        def color_negative_red(value):
+            color = 'red' if value < 0 else 'green'
+            return f'color: {color}'
 
-    # Displaying Plot
-    st.pyplot(plt.gcf())
+        styled_df = metrics_df.style.applymap(color_negative_red).format("{:.2f}")
+        st.table(styled_df)
 
-if __name__ == "__main__":
-    main()
+# Concatenate all data for monthly P&L calculation
+all_data_df = pd.concat(all_data)
+
+# Calculate monthly P&L
+all_data_df['Month'] = all_data_df['Date'].dt.to_period('M')
+
+# Select only the numeric columns for aggregation
+numeric_columns = all_data_df.select_dtypes(include='number').columns
+monthly_pnl = all_data_df.groupby('Month')[numeric_columns].sum().reset_index()
+monthly_pnl['Month'] = monthly_pnl['Month'].dt.strftime('%b, %Y')
+
+# Display Monthly P&L on the right side
+with col2:
+    st.header('Monthly P&L')
+    monthly_pnl = monthly_pnl.set_index('Month')
+    def color_negative_red_monthly(value):
+        color = 'red' if value < 0 else 'green'
+        return f'color: {color}'
+
+    styled_monthly_pnl = monthly_pnl.style.applymap(color_negative_red_monthly).format("{:.2f}")
+    st.table(styled_monthly_pnl)

@@ -27,7 +27,7 @@ st.set_page_config(layout="wide")  # Set layout to wide for full screen
 all_data = []
 
 # Two Columns
-col1, col2 = st.columns([3, 2])
+col1, col2 = st.columns([5, 3])
 
 # Sheetwise P&L metrics
 with col1:
